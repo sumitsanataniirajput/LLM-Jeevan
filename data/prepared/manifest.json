@@ -1,0 +1,147 @@
+{
+  "format": "puzzel-prepared-dataset-v2",
+  "context_length": 128,
+  "vocab_size": 2048,
+  "pad_token_id": 258,
+  "tokenizer_file": "tokenizer.json",
+  "tokenizer_training_split": "train",
+  "metadata_file": "documents.sqlite3",
+  "token_dtype": "int32",
+  "endianness": "little",
+  "model_config": {
+    "vocab_size": 2048,
+    "context_length": 128,
+    "d_model": 64,
+    "num_layers": 2,
+    "num_heads": 4,
+    "mlp_ratio": 4,
+    "dropout": 0.1,
+    "pad_token_id": 258,
+    "tie_embeddings": true
+  },
+  "tokenizer_config": {
+    "kind": "bpe",
+    "vocab_size": 2048,
+    "min_frequency": 2
+  },
+  "dataset_config": {
+    "validation_fraction": 0.1,
+    "test_fraction": 0.1,
+    "split_seed": 1337,
+    "max_document_characters": 1000000,
+    "jsonl_text_field": "text",
+    "require_document_metadata": true
+  },
+  "language_sampling_weights": {
+    "en": 0.2,
+    "hi": 0.2,
+    "es": 0.15,
+    "fr": 0.15,
+    "ar": 0.15,
+    "zh": 0.15
+  },
+  "splits": {
+    "train": {
+      "file": "train.bin",
+      "language_ranges": {
+        "ar": {
+          "start": 0,
+          "examples": 51
+        },
+        "en": {
+          "start": 51,
+          "examples": 468
+        },
+        "es": {
+          "start": 519,
+          "examples": 54
+        },
+        "fr": {
+          "start": 573,
+          "examples": 57
+        },
+        "hi": {
+          "start": 630,
+          "examples": 117
+        },
+        "zh": {
+          "start": 747,
+          "examples": 73
+        }
+      },
+      "documents": 33,
+      "characters": 394597,
+      "utf8_bytes": 456466,
+      "tokens": 102616,
+      "examples": 820
+    },
+    "validation": {
+      "file": "validation.bin",
+      "language_ranges": {
+        "ar": {
+          "start": 0,
+          "examples": 34
+        },
+        "en": {
+          "start": 34,
+          "examples": 102
+        },
+        "es": {
+          "start": 136,
+          "examples": 28
+        },
+        "fr": {
+          "start": 164,
+          "examples": 31
+        },
+        "hi": {
+          "start": 195,
+          "examples": 94
+        },
+        "zh": {
+          "start": 289,
+          "examples": 47
+        }
+      },
+      "documents": 8,
+      "characters": 96825,
+      "utf8_bytes": 131392,
+      "tokens": 42580,
+      "examples": 336
+    },
+    "test": {
+      "file": "test.bin",
+      "language_ranges": {
+        "ar": {
+          "start": 0,
+          "examples": 35
+        },
+        "en": {
+          "start": 35,
+          "examples": 92
+        },
+        "es": {
+          "start": 127,
+          "examples": 25
+        },
+        "fr": {
+          "start": 152,
+          "examples": 30
+        },
+        "hi": {
+          "start": 182,
+          "examples": 18
+        },
+        "zh": {
+          "start": 200,
+          "examples": 31
+        }
+      },
+      "documents": 8,
+      "characters": 88160,
+      "utf8_bytes": 97056,
+      "tokens": 28927,
+      "examples": 231
+    }
+  }
+}

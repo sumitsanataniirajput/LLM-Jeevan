@@ -1,0 +1,17 @@
+format = "puzzel-evaluation-suite-v1"
+name = "translation"
+task = "translation"
+description = "Translation generation scored by character n-gram F-score (chrF) against licensed references."
+required_fields = ["id", "partition", "language", "source_language", "target_language", "source_text", "reference_translation", "source", "license"]
+reference_field = "reference_translation"
+answer_field = ""
+max_new_tokens = 192
+requires_code_sandbox = false
+rubric_categories = ["adequacy", "fluency", "terminology"]
+
+[metrics]
+conditional_nll = "lower"
+perplexity = "lower"
+chrf = "higher"
+nonempty_rate = "higher"
+human_rubric_mean = "higher"

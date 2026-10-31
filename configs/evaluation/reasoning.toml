@@ -1,0 +1,17 @@
+format = "puzzel-evaluation-suite-v1"
+name = "reasoning"
+task = "reasoning"
+description = "Reasoning final-answer accuracy with optional human review of the explanation."
+required_fields = ["id", "partition", "language", "prompt", "expected_answer", "source", "license"]
+reference_field = ""
+answer_field = "expected_answer"
+max_new_tokens = 192
+requires_code_sandbox = false
+rubric_categories = ["logical_validity", "completeness", "clarity"]
+
+[metrics]
+conditional_nll = "lower"
+perplexity = "lower"
+exact_accuracy = "higher"
+nonempty_rate = "higher"
+human_rubric_mean = "higher"

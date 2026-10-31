@@ -1,0 +1,18 @@
+format = "puzzel-evaluation-suite-v1"
+name = "programming"
+task = "code_generation"
+description = "Code generation with local test cases; execution requires an explicitly configured isolated sandbox command."
+required_fields = ["id", "partition", "language", "prompt", "reference_code", "test_cases", "source", "license"]
+reference_field = "reference_code"
+answer_field = ""
+max_new_tokens = 256
+requires_code_sandbox = true
+rubric_categories = ["correctness", "readability", "maintainability"]
+
+[metrics]
+conditional_nll = "lower"
+perplexity = "lower"
+chrf = "higher"
+code_execution_pass_rate = "higher"
+unit_test_pass_rate = "higher"
+human_rubric_mean = "higher"

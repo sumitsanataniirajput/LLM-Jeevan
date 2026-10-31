@@ -1,0 +1,56 @@
+# Instruction/response data and sampler design only; no SFT trainer consumes this yet.
+format = "puzzel-instruction-response-jsonl-v1"
+
+[record]
+required_fields = ["id", "partition", "task", "language", "instruction", "response", "source", "license"]
+optional_fields = ["context", "conversation_id", "metadata", "rubric_tags"]
+allowed_partitions = ["train", "validation", "test"]
+allowed_languages = ["en", "hi", "es", "fr", "ar", "zh"]
+allowed_tasks = ["multilingual_conversation", "general_knowledge", "programming", "mathematics", "reasoning", "translation", "creative_writing"]
+
+[objective]
+target = "response"
+mask_instruction_and_context_tokens = true
+append_eos_to_response = true
+truncate = "preserve_instruction_and_response_boundary_or_reject"
+
+[splitting]
+unit = "conversation_or_source_group"
+require_train_validation_test = true
+split_before_tokenization = true
+prevent_source_group_leakage = true
+
+[sampling]
+unit = "task_then_language_then_example"
+policy = "hierarchical_weighted_with_replacement"
+task_weights_are_normalized_over_enabled_tasks = true
+language_weights_are_renormalized_over_populated_cells_for_selected_task = true
+examples_uniform_within_task_language_cell = true
+require_all_enabled_tasks = true
+require_enabled_language_coverage = true
+require_every_task_in_every_language = false
+validation_policy = "deterministic_unweighted_without_replacement"
+exact_resume_requires = "checkpointed_sampler_rng_and_num_workers_zero"
+
+[sampling.default_task_weights]
+multilingual_conversation = 1.0
+general_knowledge = 1.0
+programming = 1.0
+mathematics = 1.0
+reasoning = 1.0
+translation = 1.0
+creative_writing = 1.0
+
+[sampling.default_language_weights]
+en = 0.20
+hi = 0.20
+es = 0.15
+fr = 0.15
+ar = 0.15
+zh = 0.15
+
+[provenance]
+source_required = true
+license_required = true
+retain_attribution_and_restrictions = true
+source_group_key_required_for_split = true

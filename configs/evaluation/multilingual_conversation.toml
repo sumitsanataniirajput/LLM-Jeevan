@@ -1,0 +1,17 @@
+format = "puzzel-evaluation-suite-v1"
+name = "multilingual_conversation"
+task = "conversation_generation"
+description = "Local multilingual multi-turn conversation generation; reference comparisons are diagnostics, not capability claims."
+required_fields = ["id", "partition", "language", "messages", "reference", "source", "license"]
+reference_field = "reference"
+answer_field = ""
+max_new_tokens = 128
+requires_code_sandbox = false
+rubric_categories = ["relevance", "coherence", "instruction_following", "language_fluency"]
+
+[metrics]
+conditional_nll = "lower"
+perplexity = "lower"
+chrf = "higher"
+nonempty_rate = "higher"
+human_rubric_mean = "higher"

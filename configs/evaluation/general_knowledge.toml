@@ -1,0 +1,17 @@
+format = "puzzel-evaluation-suite-v1"
+name = "general_knowledge"
+task = "factual_question_answering"
+description = "Factual QA scored against manually curated accepted answers; exact match is a narrow proxy."
+required_fields = ["id", "partition", "language", "prompt", "accepted_answers", "source", "license"]
+reference_field = ""
+answer_field = "accepted_answers"
+max_new_tokens = 96
+requires_code_sandbox = false
+rubric_categories = ["factual_support", "relevance", "clarity"]
+
+[metrics]
+conditional_nll = "lower"
+perplexity = "lower"
+exact_accuracy = "higher"
+nonempty_rate = "higher"
+human_rubric_mean = "higher"

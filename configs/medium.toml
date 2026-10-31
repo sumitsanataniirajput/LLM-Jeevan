@@ -1,0 +1,46 @@
+# Experimental medium model. Check hardware and checkpoint space before any run.
+# ./scripts/hardware.sh --config configs/medium.toml
+
+[tokenizer]
+kind = "bpe"
+vocab_size = 16000
+min_frequency = 2
+
+[model]
+vocab_size = 16000
+context_length = 512
+d_model = 512
+num_layers = 8
+num_heads = 8
+mlp_ratio = 4
+dropout = 0.1
+pad_token_id = 258
+tie_embeddings = true
+
+[training]
+batch_size = 2
+learning_rate = 0.0001
+weight_decay = 0.1
+max_steps = 10000
+gradient_clip_norm = 1.0
+seed = 1337
+num_workers = 0
+device = "auto"
+log_every_steps = 10
+save_every_steps = 500
+scheduler = "cosine"
+warmup_steps = 500
+min_learning_rate = 0.00001
+validation_every_steps = 500
+validation_batches = 32
+early_stopping_patience = 0
+early_stopping_min_delta = 0.0
+unstable_loss_threshold = 100.0
+loss_spike_multiplier = 10.0
+
+[dataset]
+validation_fraction = 0.1
+test_fraction = 0.1
+split_seed = 1337
+max_document_characters = 1000000
+jsonl_text_field = "text"

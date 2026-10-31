@@ -1,0 +1,17 @@
+format = "puzzel-evaluation-suite-v1"
+name = "mathematics"
+task = "mathematical_problem_solving"
+description = "Mathematical answer evaluation with manually curated canonical answers; symbolic equivalence is not inferred."
+required_fields = ["id", "partition", "language", "prompt", "expected_answer", "source", "license"]
+reference_field = ""
+answer_field = "expected_answer"
+max_new_tokens = 128
+requires_code_sandbox = false
+rubric_categories = ["validity", "method", "clarity"]
+
+[metrics]
+conditional_nll = "lower"
+perplexity = "lower"
+exact_accuracy = "higher"
+nonempty_rate = "higher"
+human_rubric_mean = "higher"

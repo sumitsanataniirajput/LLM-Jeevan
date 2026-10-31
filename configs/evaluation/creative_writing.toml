@@ -1,0 +1,14 @@
+format = "puzzel-evaluation-suite-v1"
+name = "creative_writing"
+task = "creative_generation"
+description = "Creative writing generation; quality is reported only from a documented human rubric, never inferred from a proxy score."
+required_fields = ["id", "partition", "language", "prompt", "source", "license"]
+reference_field = ""
+answer_field = ""
+max_new_tokens = 256
+requires_code_sandbox = false
+rubric_categories = ["prompt_adherence", "coherence", "originality", "style"]
+
+[metrics]
+nonempty_rate = "higher"
+human_rubric_mean = "higher"

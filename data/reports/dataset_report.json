@@ -305,7 +305,7 @@
       "cpu_model": "Intel(R) Xeon(R) Processor @ 2.60GHz",
       "logical_cpu_count": 2,
       "total_ram_bytes": 4131278848,
-      "available_ram_bytes": 3488448512,
+      "available_ram_bytes": 3480166400,
       "cgroup_memory_limit_bytes": null,
       "cuda_available": false,
       "cuda_device_count": 0,
@@ -314,7 +314,7 @@
       "cuda_free_bytes": null,
       "mps_available": false,
       "disk_total_bytes": 21834924032,
-      "disk_free_bytes": 11931246592,
+      "disk_free_bytes": 11933212672,
       "disk_path": "/home/user/LLM-Jeevan/data/reports"
     },
     "selected_device": "cpu",
@@ -344,7 +344,7 @@
         "estimated_total_flops": 417988608000
       },
       "estimated_latest_and_best_checkpoint_bytes": 5744640,
-      "available_training_memory_budget_bytes": 2093069108
+      "available_training_memory_budget_bytes": 2088099840
     },
     "warnings": []
   }

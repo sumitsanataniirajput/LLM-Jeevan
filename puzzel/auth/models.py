@@ -97,9 +97,11 @@ class AuthStore:
     def authenticate(self, username: str, password: str) -> User | None:
         """Authenticate a user by username and password.
 
-        Returns the User if authentication succeeds, else None.
+        Returns the User if authentication succeeds, else None. If the
+        stored hash is in the legacy format and the migration flag allowed
+        the login, the password is rehashed to scrypt in place.
         """
-        from puzzel.auth.security import verify_password
+        from puzzel.auth.security import hash_password, needs_rehash, verify_password
 
         user = self.get_user(username)
         if user is None or not user.is_active:
@@ -107,5 +109,9 @@ class AuthStore:
         if not user.password_hash:
             return None
         if verify_password(password, user.password_hash):
+            if needs_rehash(user.password_hash):
+                # Successful login against a legacy hash (only possible when
+                # the migration flag is on): upgrade to scrypt immediately.
+                user.password_hash = hash_password(password)
             return user
         return None

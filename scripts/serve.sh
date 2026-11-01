@@ -2,11 +2,12 @@
 # Start the Puzzel LLM Inference API server (local deployment only).
 #
 # Usage:
-#   ./scripts/serve.sh [--checkpoint PATH] [--port PORT] [--host HOST]
+#   ./scripts/serve.sh [--checkpoint PATH] [--port PORT] [--host HOST] [--public]
 #
-# The server binds to 0.0.0.0 so it is reachable from the Arena live-preview
-# proxy. It does NOT expose the model publicly; it is intended for local
-# inspection behind the sandbox proxy.
+# The server binds to 127.0.0.1 (loopback) by default. Binding to a
+# non-loopback address requires the explicit --public flag, and is warned
+# about when authentication is disabled. It is NOT exposed publicly by
+# default; do not use --public on an untrusted network without auth.
 #
 set -euo pipefail
 
@@ -19,8 +20,9 @@ if [[ ! -x .venv/bin/python ]]; then
 fi
 
 CHECKPOINT="checkpoints/multilingual-first-run.best.pt"
-HOST="0.0.0.0"
+HOST="127.0.0.1"
 PORT=8000
+PUBLIC=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -30,13 +32,29 @@ while [[ $# -gt 0 ]]; do
             PORT="$2"; shift 2 ;;
         --host)
             HOST="$2"; shift 2 ;;
+        --public)
+            PUBLIC=1; shift ;;
         --help|-h)
-            echo "Usage: $0 [--checkpoint PATH] [--port PORT] [--host HOST]"
+            echo "Usage: $0 [--checkpoint PATH] [--port PORT] [--host HOST] [--public]"
             exit 0 ;;
         *)
             echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
+
+case "$HOST" in
+    127.0.0.1|localhost|::1)
+        ;;
+    *)
+        if [[ "$PUBLIC" -ne 1 ]]; then
+            echo "Refusing to bind to non-loopback host '$HOST' without --public." >&2
+            exit 1
+        fi
+        if [[ "${PUZZEL_AUTH_ENABLED:-false}" != "true" ]]; then
+            echo "WARNING: authentication is disabled while binding to non-loopback host '$HOST'." >&2
+        fi
+        ;;
+esac
 
 if [[ ! -f "$CHECKPOINT" ]]; then
     echo "Checkpoint not found: $CHECKPOINT" >&2

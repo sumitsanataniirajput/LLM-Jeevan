@@ -1,6 +1,5 @@
 # Phase 7 — First Multilingual Training Preflight & Run Plan
 
-**Branch:** `arena/6657a031-llm-jeevan` (active)  
 **Status:** Preflight complete — all checks passed. Training NOT started.  
 **Blockers:** None.
 
@@ -106,7 +105,7 @@ Per-language examples (train / validation / test):
 
 - **CPU:** 2 × Intel Xeon @ 2.60GHz (x86_64)
 - **RAM:** 4.13 GB total, ~3.44–3.47 GB available
-- **Disk:** ~11.93 GB free at `/home/user/LLM-Jeevan`
+- **Disk:** ~11.93 GB free at the repository root
 - **GPU:** CUDA unavailable → CPU-only (confirmed `torch.cuda.is_available() == False`)
 - **Estimated training memory:** ~12.48 MB (weights 0.96 MB + gradients 0.96 MB + AdamW 1.91 MB + activations 8.65 MB); checkpoint ~2.87 MB; latest+best ~5.74 MB
 - **Available training budget:** ~2.07 GB → fits comfortably

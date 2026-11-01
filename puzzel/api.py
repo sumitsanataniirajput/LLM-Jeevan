@@ -13,12 +13,14 @@ infrastructure is implied by this module.
 
 from __future__ import annotations
 
+import argparse
+import ipaddress
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator
 
@@ -28,6 +30,20 @@ from puzzel.inference import (
     GenerationConfig,
     InferenceEngine,
 )
+
+logger = logging.getLogger("puzzel.api")
+
+DEFAULT_HOST = "127.0.0.1"
+
+
+def is_loopback_host(host: str) -> bool:
+    """Return True if the host string is a loopback address or name."""
+    if host in {"localhost", "::1", "0:0:0:0:0:0:0:1"}:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 app = FastAPI(
     title="Puzzel LLM Inference API",
@@ -311,13 +327,55 @@ def create_app(checkpoint_path: str | Path | None = None) -> FastAPI:
     return app
 
 
-if __name__ == "__main__":  # pragma: no cover - manual execution only
-    import argparse
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser for the API server.
 
+    The default bind address is loopback (127.0.0.1). Binding to a
+    non-loopback address requires the explicit ``--public`` flag.
+    """
+    parser = argparse.ArgumentParser(description="Run the Puzzel LLM Inference API server")
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("PUZZEL_HOST", DEFAULT_HOST),
+        help=f"Host to bind (default: {DEFAULT_HOST}, or $PUZZEL_HOST)",
+    )
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
+    parser.add_argument(
+        "--public",
+        action="store_true",
+        help=(
+            "Explicitly allow binding to a non-loopback address. Required when "
+            "--host (or $PUZZEL_HOST) is not a loopback address."
+        ),
+    )
+    return parser
+
+
+def warn_if_auth_disabled_on_non_loopback(
+    host: str, *, auth_enabled: bool = _auth_enabled
+) -> None:
+    """Log a warning when auth is disabled and the bind host is not loopback."""
+    if not is_loopback_host(host) and not auth_enabled:
+        logger.warning(
+            "Authentication is disabled (PUZZEL_AUTH_ENABLED is not 'true') while "
+            "binding to non-loopback host %s; the API will be reachable by other "
+            "machines without an API key. Enable auth or bind to loopback.",
+            host,
+        )
+
+
+def main(argv: list[str] | None = None) -> None:  # pragma: no cover - manual execution only
     import uvicorn
 
-    parser = argparse.ArgumentParser(description="Run the Puzzel LLM Inference API server")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
-    args = parser.parse_args()
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+    if not is_loopback_host(args.host) and not args.public:
+        parser.error(
+            f"refusing to bind to non-loopback host {args.host!r} without --public"
+        )
+    warn_if_auth_disabled_on_non_loopback(args.host)
     uvicorn.run(app, host=args.host, port=args.port)
+
+
+if __name__ == "__main__":  # pragma: no cover - manual execution only
+    main()

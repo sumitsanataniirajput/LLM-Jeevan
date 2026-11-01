@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import time
-from dataclasses import dataclass, field
-from typing import Any
+import hmac
+from dataclasses import dataclass
 
-from puzzel.auth.models import AuthStore, Role, User
+from puzzel.auth.models import AuthStore, Permission, Role, User
 from puzzel.auth.security import hash_password
 
 
@@ -50,7 +49,13 @@ class APIKeyAuth:
             return AuthContext(authenticated=False, auth_method="none")
 
         for user in self.store._users.values():
-            if user.api_key == api_key and user.is_active:
+            # constant-time compare: API keys are secrets, so do not leak a
+            # prefix match through timing (hmac.compare_digest).
+            if (
+                user.api_key is not None
+                and hmac.compare_digest(user.api_key, api_key)
+                and user.is_active
+            ):
                 return AuthContext(
                     user=user,
                     authenticated=True,
@@ -85,7 +90,12 @@ class JWTAuth:
 
         token = auth_header[7:]  # Strip "Bearer "
         for user in self.store._users.values():
-            if user.metadata.get("jwt_token") == token and user.is_active:
+            stored_token = user.metadata.get("jwt_token")
+            if (
+                stored_token is not None
+                and hmac.compare_digest(str(stored_token), token)
+                and user.is_active
+            ):
                 return AuthContext(
                     user=user,
                     authenticated=True,

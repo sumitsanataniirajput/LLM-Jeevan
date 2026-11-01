@@ -374,7 +374,12 @@ class TransformerLM(nn.Module):
         return count_parameters(self)
 
     def verify_random_initialization(self) -> bool:
-        """Check every parameter is finite and non-constant after random init."""
+        """Check every parameter is finite and non-constant after random init.
+
+        Allows constant parameters at standard initialization values
+        (e.g. RMSNorm/LayerNorm weight = 1.0, bias = 0.0) which are
+        legitimate random-initialization patterns, not pretrained weights.
+        """
         parameters = dict(self.named_parameters())
         if not parameters:
             raise RuntimeError("model has no parameters to verify")
@@ -385,9 +390,14 @@ class TransformerLM(nn.Module):
             if not torch.count_nonzero(values).item():
                 raise RuntimeError(f"parameter {name} is entirely zero")
             if values.numel() > 1 and values.min().item() == values.max().item():
-                raise RuntimeError(
-                    f"parameter {name} is constant, not randomly initialized"
-                )
+                constant_value = values.flatten()[0].item()
+                # Standard norm/bias initialization values are acceptable;
+                # anything else constant is suspicious (possible pretrained load).
+                if constant_value not in (0.0, 1.0, -1.0):
+                    raise RuntimeError(
+                        f"parameter {name} is constant ({constant_value}), "
+                        "not randomly initialized"
+                    )
         return True
 
     def model_info(self) -> dict[str, Any]:

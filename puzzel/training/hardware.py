@@ -1,4 +1,9 @@
-"""Conservative local hardware inspection and training memory estimates."""
+"""Conservative local hardware inspection and training memory estimates.
+
+Updated for the modernized Puzzel Transformer architecture. Parameter
+count estimates now delegate to ``ModelConfig.parameter_count_estimate``
+which accounts for RoPE, RMSNorm, SwiGLU, GQA, and bias settings.
+"""
 
 from __future__ import annotations
 
@@ -163,19 +168,12 @@ def detect_hardware(disk_path: str | Path = ".") -> HardwareInfo:
 
 
 def estimate_parameter_count(config: ModelConfig) -> int:
-    """Count unique Transformer parameters from its dimensions without allocation."""
-    width = config.d_model
-    expanded = width * config.mlp_ratio
-    embeddings = config.vocab_size * width + config.context_length * width
-    blocks = config.num_layers * (
-        4 * width * width
-        + 2 * width * expanded
-        + 9 * width
-        + expanded
-    )
-    final_norm = 2 * width
-    output_head = 0 if config.tie_embeddings else config.vocab_size * width
-    return embeddings + blocks + final_norm + output_head
+    """Count unique Transformer parameters from its dimensions without allocation.
+
+    Delegates to ``ModelConfig.parameter_count_estimate`` which accounts for
+    the modern architecture options (RoPE, RMSNorm, SwiGLU, GQA, bias).
+    """
+    return config.parameter_count_estimate
 
 
 def estimate_memory_requirements(

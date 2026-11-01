@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Puzzel — AI Chat</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app">
+        <header class="app-header">
+            <div class="logo">Puzzel</div>
+            <div class="header-actions">
+                <button id="newChatBtn" class="icon-btn" title="New chat">+</button>
+                <button id="settingsBtn" class="icon-btn" title="Settings">⚙</button>
+            </div>
+        </header>
+
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h3>Conversations</h3>
+            </div>
+            <ul id="conversationList" class="conversation-list">
+                <li class="conv-item active" data-id="default">
+                    <span class="conv-title">New Conversation</span>
+                </li>
+            </ul>
+        </div>
+
+        <div class="main">
+            <div class="chat-container" id="chatContainer">
+                <div class="messages" id="messages">
+                    <div class="message ai-message">
+                        <div class="message-content">
+                            Hello! I'm Puzzel, a multilingual language model.
+                            How can I help you today?
+                        </div>
+                    </div>
+                </div>
+                <div class="typing-indicator" id="typingIndicator" style="display: none;">
+                    <div class="typing-dot"></div>
+                    <div class="typing-dot"></div>
+                    <div class="typing-dot"></div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <form id="chatForm">
+                    <div class="input-wrapper">
+                        <textarea
+                            id="messageInput"
+                            rows="1"
+                            placeholder="Type a message... (supports English, Hindi, Spanish, French, Arabic, Chinese)"
+                            wrap="soft"
+                        ></textarea>
+                        <button type="submit" id="sendBtn" class="send-btn">Send</button>
+                    </div>
+                    <div class="input-controls">
+                        <button id="stopBtn" class="icon-btn secondary" style="display: none;" title="Stop">⏹</button>
+                        <button id="regenerateBtn" class="icon-btn secondary" style="display: none;" title="Regenerate">🔄</button>
+                        <span id="charCount" class="char-count">0</span>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <h3>Settings</h3>
+            <div class="setting-group">
+                <label>Temperature</label>
+                <input type="range" id="tempSlider" min="0" max="2" step="0.1" value="1.0">
+                <span id="tempValue">1.0</span>
+            </div>
+            <div class="setting-group">
+                <label>Max new tokens</label>
+                <input type="range" id="maxTokensSlider" min="1" max="512" step="1" value="50">
+                <span id="maxTokensValue">50</span>
+            </div>
+            <div class="setting-group">
+                <label>System prompt</label>
+                <textarea id="systemPrompt" rows="3" placeholder="Custom system prompt..."></textarea>
+            </div>
+            <button id="closeSettings" class="btn-primary">Close</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

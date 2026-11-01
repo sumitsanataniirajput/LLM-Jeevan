@@ -4,9 +4,12 @@ Provides a clean, dependency-light inference interface with sampling
 (temperature, top-k, top-p) for text generation from saved checkpoints.
 No training, no weight modification, no external services are used.
 
+Supports KV-cache for faster autoregressive generation when the model
+was configured with use_kv_cache=True.
+
 Designed for local deployment only. The model is a small, from-scratch
-decoder-only Transformer (239K parameters) trained on a tiny multilingual
-public-domain corpus; generation quality is limited and should not be
+decoder-only Transformer trained on a tiny multilingual public-domain
+corpus; generation quality is limited and should not be
 claimed to match production-grade language models.
 """
 
@@ -53,6 +56,8 @@ class GenerationConfig:
         stop_at_eos: If True, stop generation when the EOS token is produced.
         forbidden_token_ids: Token IDs that are never sampled (default:
             BOS, PAD, UNK).
+        use_kv_cache: If True and the model supports it, use KV-cache for
+            faster incremental decoding. Default True.
     """
 
     max_new_tokens: int = 50
@@ -62,6 +67,7 @@ class GenerationConfig:
     seed: int | None = None
     stop_at_eos: bool = True
     forbidden_token_ids: tuple[int, ...] = (BOS_TOKEN_ID, PAD_TOKEN_ID, UNK_TOKEN_ID)
+    use_kv_cache: bool = True
 
     def __post_init__(self) -> None:
         if (
@@ -110,6 +116,10 @@ class InferenceEngine:
     The model runs in eval mode under ``torch.inference_mode`` for memory
     efficiency. All computation happens on the requested device (CPU by
     default; CUDA is not available in this environment).
+
+    When the loaded model was configured with ``use_kv_cache=True``, the
+    engine uses KV-cache for incremental decoding, significantly speeding
+    up generation of long sequences.
     """
 
     def __init__(
@@ -126,6 +136,10 @@ class InferenceEngine:
         self.model_config = model_config
         self.context_length = int(getattr(model_config, "context_length", 128))
         self.vocab_size = int(getattr(model_config, "vocab_size", tokenizer.vocab_size))
+        self._use_kv_cache = bool(
+            getattr(model_config, "use_kv_cache", False)
+            and getattr(model, "kv_cache_manager", None) is not None
+        )
 
     @classmethod
     def from_checkpoint(
@@ -152,16 +166,25 @@ class InferenceEngine:
     @property
     def model_info(self) -> dict[str, Any]:
         """Return static metadata about the loaded model."""
-        return {
+        info = {
             "vocab_size": self.vocab_size,
             "context_length": self.context_length,
             "d_model": getattr(self.model_config, "d_model", None),
             "num_layers": getattr(self.model_config, "num_layers", None),
             "num_heads": getattr(self.model_config, "num_heads", None),
+            "num_kv_heads": getattr(
+                self.model_config, "effective_num_kv_heads", None
+            ),
             "parameter_count": getattr(self.model, "parameter_count", lambda: None)(),
             "device": str(self.device),
             "precision": "fp32",
+            "use_kv_cache": self._use_kv_cache,
+            "use_rope": getattr(self.model_config, "use_rope", False),
+            "use_rmsnorm": getattr(self.model_config, "use_rmsnorm", False),
+            "use_swiglu": getattr(self.model_config, "use_swiglu", False),
+            "use_gqa": getattr(self.model_config, "use_gqa", False),
         }
+        return info
 
     def _sample_next_token(self, logits: torch.Tensor, config: GenerationConfig) -> int:
         """Sample the next token ID from logits using temperature/top-k/top-p."""
@@ -276,19 +299,63 @@ class InferenceEngine:
         generated: list[int] = []
         stop_reason = "max_tokens"
 
-        for _ in range(config.max_new_tokens):
-            active_ids = (prompt_ids + generated)[-self.context_length :]
-            input_ids = torch.tensor(
-                active_ids, dtype=torch.long, device=self.device
-            ).unsqueeze(0)
-            logits = self.model(input_ids)[0, -1]
-            next_token = self._sample_next_token(logits, config)
+        # Use KV-cache if the model supports it and it's enabled.
+        use_cache = config.use_kv_cache and self._use_kv_cache and self.model.use_kv_cache
 
-            if config.stop_at_eos and next_token == EOS_TOKEN_ID:
-                stop_reason = "eos"
-                break
+        if use_cache:
+            self.model.clear_kv_cache()
+            cache_manager = self.model.kv_cache_manager
+            if cache_manager is None:
+                # Initialize cache manager with a dummy forward pass.
+                dummy_ids = torch.tensor(
+                    [prompt_ids], dtype=torch.long, device=self.device
+                )
+                _, cache_manager = self.model(
+                    dummy_ids, use_cache=True
+                )
 
-            generated.append(next_token)
+            # Process the prompt through the model to populate the cache.
+            # We process the full prompt at once, then generate one token at a time.
+            prompt_tensor = torch.tensor(
+                [prompt_ids], dtype=torch.long, device=self.device
+            )
+            logits, cache_manager = self.model(
+                prompt_tensor, use_cache=True
+            )
+            # Sample first token from the last position of the prompt.
+            next_token = self._sample_next_token(logits[0, -1], config)
+
+            for _ in range(config.max_new_tokens):
+                if config.stop_at_eos and next_token == EOS_TOKEN_ID:
+                    stop_reason = "eos"
+                    break
+
+                generated.append(next_token)
+
+                # Run model with just the new token and existing cache.
+                token_tensor = torch.tensor(
+                    [[next_token]], dtype=torch.long, device=self.device
+                )
+                logits, cache_manager = self.model(
+                    token_tensor, cache_manager=cache_manager, use_cache=True
+                )
+                next_token = self._sample_next_token(logits[0, -1], config)
+
+        else:
+            # Non-cached path: recompute full context each step.
+            for _ in range(config.max_new_tokens):
+                active_ids = (prompt_ids + generated)[-self.context_length :]
+                input_ids = torch.tensor(
+                    active_ids, dtype=torch.long, device=self.device
+                ).unsqueeze(0)
+                logits = self.model(input_ids)[0, -1]
+                next_token = self._sample_next_token(logits, config)
+
+                if config.stop_at_eos and next_token == EOS_TOKEN_ID:
+                    stop_reason = "eos"
+                    break
+
+                generated.append(next_token)
 
         generated_text = self.tokenizer.decode(generated)
         elapsed = time.perf_counter() - start_time
@@ -308,3 +375,50 @@ class InferenceEngine:
         return self.generate(
             prompt, GenerationConfig(max_new_tokens=max_new_tokens, temperature=0.0)
         )
+
+
+# Re-export streaming, batching, quantization, and optimizer modules.
+from puzzel.inference.batching import (  # noqa: E402
+    BatchGenerationResult,
+    BatchResult,
+    batch_generate,
+)
+from puzzel.inference.optimizer import (  # noqa: E402
+    InferenceProfile,
+    get_default_profiles,
+    get_memory_profile,
+    memory_efficient_attention,
+    select_device,
+    set_cpu_threads,
+)
+from puzzel.inference.quantization import (  # noqa: E402
+    QuantizationConfig,
+    dequantize_model,
+    estimate_memory_savings,
+    quantize_model,
+)
+from puzzel.inference.streaming import (  # noqa: E402
+    stream_generate,
+    stream_generate_cumulative,
+)
+
+__all__ = [
+    "GenerationConfig",
+    "GenerationResult",
+    "InferenceEngine",
+    "BatchGenerationResult",
+    "BatchResult",
+    "batch_generate",
+    "InferenceProfile",
+    "get_default_profiles",
+    "get_memory_profile",
+    "memory_efficient_attention",
+    "select_device",
+    "set_cpu_threads",
+    "QuantizationConfig",
+    "dequantize_model",
+    "estimate_memory_savings",
+    "quantize_model",
+    "stream_generate",
+    "stream_generate_cumulative",
+]

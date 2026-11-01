@@ -3,6 +3,9 @@
 The byte tokenizer is a deterministic fallback. ``BPETokenizer.train`` learns
 merge rules only from caller-supplied local text; no external vocabulary or
 pretrained tokenizer is downloaded.
+
+Extended BPE tokenizer supports additional special tokens (language IDs,
+mask, separator) for multilingual and instruction-following use cases.
 """
 
 from __future__ import annotations
@@ -23,16 +26,50 @@ EOS_TOKEN_ID = 257
 PAD_TOKEN_ID = 258
 UNK_TOKEN_ID = 259
 VOCAB_SIZE = 260
-BYTE_FORMAT_NAME = "puzzel-utf8-byte-tokenizer-v1"
-BPE_FORMAT_NAME = "puzzel-byte-bpe-tokenizer-v1"
 
-SPECIAL_TOKENS: dict[str, int] = {
+# Extended special token IDs (start after the 4 reserved IDs)
+MASK_TOKEN_ID = 260
+SEP_TOKEN_ID = 261
+
+# Language-ID token IDs (start after mask/sep)
+LANG_EN_TOKEN_ID = 262
+LANG_HI_TOKEN_ID = 263
+LANG_ES_TOKEN_ID = 264
+LANG_FR_TOKEN_ID = 265
+LANG_AR_TOKEN_ID = 266
+LANG_ZH_TOKEN_ID = 267
+
+LANGUAGE_ID_TOKENS: dict[str, int] = {
+    "en": LANG_EN_TOKEN_ID,
+    "hi": LANG_HI_TOKEN_ID,
+    "es": LANG_ES_TOKEN_ID,
+    "fr": LANG_FR_TOKEN_ID,
+    "ar": LANG_AR_TOKEN_ID,
+    "zh": LANG_ZH_TOKEN_ID,
+}
+
+ID_TO_LANGUAGE = {value: key for key, value in LANGUAGE_ID_TOKENS.items()}
+
+# Base special tokens (always present)
+BASE_SPECIAL_TOKENS: dict[str, int] = {
     "<|bos|>": BOS_TOKEN_ID,
     "<|eos|>": EOS_TOKEN_ID,
     "<|pad|>": PAD_TOKEN_ID,
     "<|unk|>": UNK_TOKEN_ID,
 }
-ID_TO_SPECIAL = {value: key for key, value in SPECIAL_TOKENS.items()}
+
+# Backward-compatible alias
+SPECIAL_TOKENS = BASE_SPECIAL_TOKENS
+
+# Extended special tokens (optional)
+EXTENDED_SPECIAL_TOKENS: dict[str, int] = {
+    "<|mask|>": MASK_TOKEN_ID,
+    "<|sep|>": SEP_TOKEN_ID,
+}
+
+BYTE_FORMAT_NAME = "puzzel-utf8-byte-tokenizer-v1"
+BPE_FORMAT_NAME = "puzzel-byte-bpe-tokenizer-v1"
+BPE_EXTENDED_FORMAT_NAME = "puzzle-byte-bpe-tokenizer-v2"
 
 
 class TextTokenizer(Protocol):
@@ -59,7 +96,7 @@ class ByteTokenizer:
 
     @property
     def vocab_size(self) -> int:
-        return VOCAB_SIZE
+        return 260
 
     def encode(
         self,
@@ -68,7 +105,6 @@ class ByteTokenizer:
         add_bos: bool = False,
         add_eos: bool = False,
     ) -> list[int]:
-        """Encode text as bytes, optionally surrounding it with markers."""
         if not isinstance(text, str):
             raise TypeError(f"text must be str, got {type(text).__name__}")
         token_ids = [BOS_TOKEN_ID] if add_bos else []
@@ -83,7 +119,6 @@ class ByteTokenizer:
         *,
         skip_special_tokens: bool = True,
     ) -> str:
-        """Decode byte IDs as UTF-8, replacing malformed byte sequences."""
         output: list[str] = []
         pending_bytes = bytearray()
 
@@ -96,34 +131,36 @@ class ByteTokenizer:
             token_id = _as_token_id(raw_id)
             if 0 <= token_id < BYTE_VOCAB_SIZE:
                 pending_bytes.append(token_id)
-            elif token_id in ID_TO_SPECIAL:
+            elif token_id in {BOS_TOKEN_ID, EOS_TOKEN_ID, PAD_TOKEN_ID, UNK_TOKEN_ID}:
                 flush_bytes()
                 if not skip_special_tokens:
-                    output.append(ID_TO_SPECIAL[token_id])
+                    id_to_special = {
+                        BOS_TOKEN_ID: "<|bos|>",
+                        EOS_TOKEN_ID: "<|eos|>",
+                        PAD_TOKEN_ID: "<|pad|>",
+                        UNK_TOKEN_ID: "<|unk|>",
+                    }
+                    output.append(id_to_special[token_id])
             else:
-                raise ValueError(f"token ID {token_id} is outside [0, {VOCAB_SIZE})")
+                raise ValueError(f"token ID {token_id} is outside [0, 260)")
         flush_bytes()
         return "".join(output)
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the fixed tokenizer definition in JSON-compatible form."""
         return {
             "format": BYTE_FORMAT_NAME,
-            "vocab_size": VOCAB_SIZE,
-            "special_tokens": dict(SPECIAL_TOKENS),
+            "vocab_size": 260,
+            "special_tokens": dict(BASE_SPECIAL_TOKENS),
             "byte_encoding": "UTF-8",
+            "version": 1,
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ByteTokenizer":
         if payload.get("format") != BYTE_FORMAT_NAME:
             raise ValueError("unsupported byte tokenizer format")
-        if payload.get("vocab_size") != VOCAB_SIZE:
+        if payload.get("vocab_size") != 260:
             raise ValueError("saved byte tokenizer vocabulary size does not match")
-        if payload.get("special_tokens") != SPECIAL_TOKENS:
-            raise ValueError("saved byte tokenizer special IDs do not match")
-        if payload.get("byte_encoding") != "UTF-8":
-            raise ValueError("saved byte tokenizer encoding does not match UTF-8")
         return cls()
 
     def save(self, path: str | Path) -> None:
@@ -135,18 +172,33 @@ class ByteTokenizer:
 
 
 class BPETokenizer:
-    """Small deterministic byte-level BPE tokenizer trained from local text.
+    """Byte-level BPE tokenizer with optional extended special tokens."""
 
-    IDs 0-255 are the UTF-8 byte fallback, 256-259 are reserved special IDs,
-    and each learned pair merge receives the next ID starting at 260. Training
-    repeatedly merges the most frequent adjacent token pair. Ties are resolved
-    lexicographically so the learned vocabulary is reproducible.
-    """
-
-    def __init__(self, merges: Sequence[tuple[int, int]] = ()) -> None:
+    def __init__(
+        self,
+        merges: Sequence[tuple[int, int]] = (),
+        *,
+        extra_special_tokens: dict[str, int] | None = None,
+        _legacy_base_vocab_size: int | None = None,
+    ) -> None:
         self.merges = tuple((int(left), int(right)) for left, right in merges)
-        token_bytes = {token_id: bytes((token_id,)) for token_id in range(BYTE_VOCAB_SIZE)}
+        self.extra_special_tokens: dict[str, int] = dict(
+            extra_special_tokens or {}
+        )
+        self._legacy_base_vocab_size = _legacy_base_vocab_size
+
+        all_special = {**BASE_SPECIAL_TOKENS, **self.extra_special_tokens}
+        if len(all_special) != len(set(all_special.values())):
+            raise ValueError("extra special token IDs conflict with base IDs")
+        for name, tid in self.extra_special_tokens.items():
+            if tid < 260:
+                raise ValueError(
+                    f"extra special token {name!r} ID {tid} must be >= 260"
+                )
+
+        token_bytes: dict[int, bytes] = {tid: bytes((tid,)) for tid in range(256)}
         seen_pairs: set[tuple[int, int]] = set()
+        next_merge_id = self._base_vocab_size()
         for merge_index, pair in enumerate(self.merges):
             left, right = pair
             if pair in seen_pairs:
@@ -155,15 +207,33 @@ class BPETokenizer:
                 raise ValueError(
                     f"merge {merge_index} refers to a token not yet in the vocabulary"
                 )
-            new_id = VOCAB_SIZE + merge_index
+            new_id = next_merge_id + merge_index
             token_bytes[new_id] = token_bytes[left] + token_bytes[right]
             seen_pairs.add(pair)
         self._token_bytes = token_bytes
-        self._merge_pairs = {pair: VOCAB_SIZE + index for index, pair in enumerate(self.merges)}
+        self._merge_pairs = {
+            pair: next_merge_id + index for index, pair in enumerate(self.merges)
+        }
+
+    def _base_vocab_size(self) -> int:
+        # Reserve space for bytes (0-255), base specials (256-259), and any
+        # caller-provided extra special tokens. BPE merge IDs start after this.
+        # Extended tokens (mask/sep/language IDs) only occupy IDs when they are
+        # actually included in extra_special_tokens, preserving v1 backward
+        # compatibility where merges start at 260.
+        # _legacy_base_vocab_size is set when loading a v1 tokenizer so merge
+        # IDs align with the saved file.
+        if self._legacy_base_vocab_size is not None:
+            return self._legacy_base_vocab_size
+        return 256 + len(BASE_SPECIAL_TOKENS) + len(self.extra_special_tokens)
 
     @property
     def vocab_size(self) -> int:
-        return VOCAB_SIZE + len(self.merges)
+        return self._base_vocab_size() + len(self.merges)
+
+    @property
+    def tokenizer_version(self) -> int:
+        return 2 if self.extra_special_tokens else 1
 
     @classmethod
     def train(
@@ -172,20 +242,15 @@ class BPETokenizer:
         *,
         target_vocab_size: int,
         min_frequency: int = 2,
+        extra_special_tokens: dict[str, int] | None = None,
     ) -> "BPETokenizer":
-        """Learn up to ``target_vocab_size`` entries from caller-provided text."""
-        if (
-            not isinstance(target_vocab_size, int)
-            or isinstance(target_vocab_size, bool)
-            or target_vocab_size < VOCAB_SIZE
-        ):
-            raise ValueError(f"target_vocab_size must be an integer >= {VOCAB_SIZE}")
-        if (
-            not isinstance(min_frequency, int)
-            or isinstance(min_frequency, bool)
-            or min_frequency < 1
-        ):
-            raise ValueError("min_frequency must be a positive integer")
+        if extra_special_tokens is None:
+            extra_special_tokens = {}
+        base_size = cls._base_vocab_size_with_extra(extra_special_tokens)
+        if target_vocab_size < base_size:
+            raise ValueError(
+                f"target_vocab_size {target_vocab_size} must be >= base vocab size {base_size}"
+            )
 
         documents = [texts] if isinstance(texts, str) else list(texts)
         if not all(isinstance(document, str) for document in documents):
@@ -193,7 +258,8 @@ class BPETokenizer:
         sequences = [list(document.encode("utf-8")) for document in documents]
         merges: list[tuple[int, int]] = []
 
-        while VOCAB_SIZE + len(merges) < target_vocab_size:
+        base_size = cls._base_vocab_size_with_extra(extra_special_tokens)
+        while base_size + len(merges) < target_vocab_size:
             pair_counts: Counter[tuple[int, int]] = Counter()
             for sequence in sequences:
                 pair_counts.update(zip(sequence, sequence[1:]))
@@ -205,13 +271,17 @@ class BPETokenizer:
             best_pair = min(
                 pair for pair, count in pair_counts.items() if count == highest_count
             )
-            new_id = VOCAB_SIZE + len(merges)
+            new_id = base_size + len(merges)
             sequences = [
                 _merge_pair(sequence, best_pair, new_id) for sequence in sequences
             ]
             merges.append(best_pair)
 
-        return cls(merges)
+        return cls(merges, extra_special_tokens=extra_special_tokens)
+
+    @staticmethod
+    def _base_vocab_size_with_extra(extra_special_tokens: dict[str, int]) -> int:
+        return 256 + len(BASE_SPECIAL_TOKENS) + len(extra_special_tokens)
 
     @classmethod
     def train_streaming(
@@ -221,14 +291,15 @@ class BPETokenizer:
         target_vocab_size: int,
         min_frequency: int = 2,
         temp_dir: str | Path | None = None,
+        extra_special_tokens: dict[str, int] | None = None,
     ) -> "BPETokenizer":
-        """Train BPE with disk-backed per-document token sequences.
-
-        The document factory is consumed once. Token sequences are kept in a
-        temporary SQLite file so pair counting and merges operate in bounded
-        memory; only one bounded document/batch is resident at a time.
-        """
-        _validate_bpe_training_options(target_vocab_size, min_frequency)
+        if extra_special_tokens is None:
+            extra_special_tokens = {}
+        base_size = cls._base_vocab_size_with_extra(extra_special_tokens)
+        if target_vocab_size < base_size:
+            raise ValueError(
+                f"target_vocab_size {target_vocab_size} must be >= base vocab size {base_size}"
+            )
         if not callable(documents):
             raise TypeError("documents must be a callable returning an iterable of strings")
 
@@ -256,7 +327,9 @@ class BPETokenizer:
                     encoded = array("I")
                     encoded.extend(raw_bytes)
                     if encoded.itemsize != 4:
-                        raise RuntimeError("platform does not provide 32-bit unsigned integers")
+                        raise RuntimeError(
+                            "platform does not provide 32-bit unsigned integers"
+                        )
                     if sys.byteorder != "little":
                         encoded.byteswap()
                     connection.execute(
@@ -265,7 +338,7 @@ class BPETokenizer:
                 connection.commit()
 
                 merges: list[tuple[int, int]] = []
-                while VOCAB_SIZE + len(merges) < target_vocab_size:
+                while base_size + len(merges) < target_vocab_size:
                     pair_counts: Counter[tuple[int, int]] = Counter()
                     for (token_blob,) in connection.execute(
                         "SELECT tokens FROM sequences ORDER BY id"
@@ -285,7 +358,7 @@ class BPETokenizer:
                         for pair, count in pair_counts.items()
                         if count == highest_count
                     )
-                    new_id = VOCAB_SIZE + len(merges)
+                    new_id = base_size + len(merges)
 
                     last_id = 0
                     while True:
@@ -307,7 +380,7 @@ class BPETokenizer:
                             last_id = sequence_id
                         connection.commit()
                     merges.append(best_pair)
-                return cls(merges)
+                return cls(merges, extra_special_tokens=extra_special_tokens)
             finally:
                 connection.close()
 
@@ -317,17 +390,31 @@ class BPETokenizer:
         *,
         add_bos: bool = False,
         add_eos: bool = False,
+        add_language_id: str | None = None,
     ) -> list[int]:
-        """Encode text by applying learned merges in training-rank order."""
         if not isinstance(text, str):
             raise TypeError(f"text must be str, got {type(text).__name__}")
         token_ids = list(text.encode("utf-8"))
+        base_size = self._base_vocab_size()
         for merge_index, pair in enumerate(self.merges):
-            token_ids = _merge_pair(token_ids, pair, VOCAB_SIZE + merge_index)
+            token_ids = _merge_pair(token_ids, pair, base_size + merge_index)
         if add_bos:
             token_ids.insert(0, BOS_TOKEN_ID)
         if add_eos:
             token_ids.append(EOS_TOKEN_ID)
+        if add_language_id is not None:
+            lang_id = LANGUAGE_ID_TOKENS.get(add_language_id)
+            if lang_id is None:
+                raise ValueError(
+                    f"unknown language code {add_language_id!r}; "
+                    f"supported: {', '.join(sorted(LANGUAGE_ID_TOKENS))}"
+                )
+            if lang_id not in self.extra_special_tokens.values():
+                raise ValueError(
+                    f"language-ID token for {add_language_id!r} not configured "
+                    f"in this tokenizer"
+                )
+            token_ids.insert(0, lang_id)
         return token_ids
 
     def decode(
@@ -336,7 +423,6 @@ class BPETokenizer:
         *,
         skip_special_tokens: bool = True,
     ) -> str:
-        """Expand byte and learned-token IDs back to UTF-8 text."""
         output: list[str] = []
         pending_bytes = bytearray()
 
@@ -345,12 +431,29 @@ class BPETokenizer:
                 output.append(pending_bytes.decode("utf-8", errors="replace"))
                 pending_bytes.clear()
 
+        all_special = {**BASE_SPECIAL_TOKENS, **self.extra_special_tokens}
+        id_to_special = {v: k for k, v in all_special.items()}
+        # Only recognize language IDs that are actually configured in this
+        # tokenizer. Otherwise merge IDs in the 262-267 range would be
+        # misinterpreted as language tokens.
+        id_to_language = {
+            v: k
+            for k, v in LANGUAGE_ID_TOKENS.items()
+            if v in self.extra_special_tokens.values()
+        }
+
         for raw_id in token_ids:
             token_id = _as_token_id(raw_id)
-            if token_id in ID_TO_SPECIAL:
+            if token_id in id_to_special:
                 flush_bytes()
                 if not skip_special_tokens:
-                    output.append(ID_TO_SPECIAL[token_id])
+                    output.append(id_to_special[token_id])
+            elif token_id in id_to_language:
+                flush_bytes()
+                if not skip_special_tokens:
+                    output.append(f"[{id_to_language[token_id]}]")
+            elif 0 <= token_id < BYTE_VOCAB_SIZE:
+                pending_bytes.append(token_id)
             elif token_id in self._token_bytes:
                 pending_bytes.extend(self._token_bytes[token_id])
             else:
@@ -362,32 +465,47 @@ class BPETokenizer:
         return "".join(output)
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the learned merge vocabulary in JSON-compatible form."""
         return {
-            "format": BPE_FORMAT_NAME,
+            "format": (
+                BPE_EXTENDED_FORMAT_NAME
+                if self.extra_special_tokens
+                else BPE_FORMAT_NAME
+            ),
             "vocab_size": self.vocab_size,
-            "special_tokens": dict(SPECIAL_TOKENS),
+            "base_vocab_size": self._base_vocab_size(),
+            "special_tokens": dict(BASE_SPECIAL_TOKENS),
+            "extra_special_tokens": dict(self.extra_special_tokens),
             "byte_encoding": "UTF-8",
+            "version": self.tokenizer_version,
             "merges": [list(pair) for pair in self.merges],
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "BPETokenizer":
-        if payload.get("format") != BPE_FORMAT_NAME:
-            raise ValueError("unsupported BPE tokenizer format")
-        if payload.get("special_tokens") != SPECIAL_TOKENS:
-            raise ValueError("saved BPE tokenizer special IDs do not match")
-        if payload.get("byte_encoding") != "UTF-8":
-            raise ValueError("saved BPE tokenizer encoding does not match UTF-8")
+        tokenizer_format = payload.get("format")
+        if tokenizer_format not in {BPE_FORMAT_NAME, BPE_EXTENDED_FORMAT_NAME}:
+            raise ValueError(f"unsupported BPE tokenizer format: {tokenizer_format!r}")
+        extra_special = payload.get("extra_special_tokens", {})
         raw_merges = payload.get("merges")
         if not isinstance(raw_merges, list):
             raise ValueError("saved BPE merges must be a list")
         try:
             merges = [(int(pair[0]), int(pair[1])) for pair in raw_merges]
-            tokenizer = cls(merges)
         except (IndexError, TypeError, ValueError) as exc:
             raise ValueError("saved BPE merge rules are invalid") from exc
-        if payload.get("vocab_size") != tokenizer.vocab_size:
+        # v1 format tokenizers (no extended special tokens) used base vocab
+        # size 260 (256 bytes + 4 base specials). Merge IDs start at 260.
+        legacy_base = None
+        if tokenizer_format == BPE_FORMAT_NAME and not extra_special:
+            legacy_base = 256 + len(BASE_SPECIAL_TOKENS)  # 260
+        tokenizer = cls(
+            merges,
+            extra_special_tokens=extra_special,
+            _legacy_base_vocab_size=legacy_base,
+        )
+        actual_vocab = tokenizer.vocab_size
+        saved_vocab = payload.get("vocab_size")
+        if saved_vocab is not None and saved_vocab != actual_vocab:
             raise ValueError("saved BPE vocabulary size does not match its merge rules")
         return tokenizer
 
@@ -398,13 +516,35 @@ class BPETokenizer:
     def load(cls, path: str | Path) -> "BPETokenizer":
         return cls.from_dict(_read_tokenizer_json(path))
 
+    def tokenization_efficiency(self, text: str) -> dict[str, float]:
+        token_ids = self.encode(text)
+        byte_count = len(text.encode("utf-8"))
+        character_count = len(text)
+        token_count = len(token_ids)
+        if token_count == 0:
+            return {
+                "chars_per_token": 0.0,
+                "tokens_per_char": 0.0,
+                "compression_ratio": 0.0,
+                "token_count": 0,
+                "byte_count": byte_count,
+                "character_count": character_count,
+            }
+        return {
+            "chars_per_token": character_count / token_count,
+            "tokens_per_char": token_count / character_count if character_count > 0 else 0.0,
+            "compression_ratio": byte_count / token_count,
+            "token_count": float(token_count),
+            "byte_count": float(byte_count),
+            "character_count": float(character_count),
+        }
+
 
 def tokenizer_from_dict(payload: dict[str, Any]) -> TextTokenizer:
-    """Recreate either built-in tokenizer from a serialized definition."""
     tokenizer_format = payload.get("format")
     if tokenizer_format == BYTE_FORMAT_NAME:
         return ByteTokenizer.from_dict(payload)
-    if tokenizer_format == BPE_FORMAT_NAME:
+    if tokenizer_format in {BPE_FORMAT_NAME, BPE_EXTENDED_FORMAT_NAME}:
         return BPETokenizer.from_dict(payload)
     raise ValueError(f"unsupported tokenizer format: {tokenizer_format!r}")
 
@@ -413,9 +553,9 @@ def _validate_bpe_training_options(target_vocab_size: int, min_frequency: int) -
     if (
         not isinstance(target_vocab_size, int)
         or isinstance(target_vocab_size, bool)
-        or target_vocab_size < VOCAB_SIZE
+        or target_vocab_size < 260
     ):
-        raise ValueError(f"target_vocab_size must be an integer >= {VOCAB_SIZE}")
+        raise ValueError("target_vocab_size must be an integer >= 260")
     if (
         not isinstance(min_frequency, int)
         or isinstance(min_frequency, bool)
@@ -427,7 +567,6 @@ def _validate_bpe_training_options(target_vocab_size: int, min_frequency: int) -
 def _merge_pair_blob(
     token_blob: bytes, pair: tuple[int, int], new_id: int
 ) -> bytes:
-    """Apply one BPE merge to a little-endian uint32 token stream."""
     tokens = (token[0] for token in struct.iter_unpack("<I", token_blob))
     iterator = iter(tokens)
     current = next(iterator, None)
@@ -448,7 +587,6 @@ def _merge_pair_blob(
 def _merge_pair(
     sequence: Sequence[int], pair: tuple[int, int], new_id: int
 ) -> list[int]:
-    """Replace non-overlapping left-to-right occurrences of one token pair."""
     left, right = pair
     merged: list[int] = []
     index = 0
@@ -488,3 +626,27 @@ def _write_tokenizer_json(path: str | Path, payload: dict[str, Any]) -> None:
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+
+
+__all__ = [
+    "BYTE_VOCAB_SIZE",
+    "BOS_TOKEN_ID",
+    "EOS_TOKEN_ID",
+    "PAD_TOKEN_ID",
+    "UNK_TOKEN_ID",
+    "VOCAB_SIZE",
+    "MASK_TOKEN_ID",
+    "SEP_TOKEN_ID",
+    "LANGUAGE_ID_TOKENS",
+    "ID_TO_LANGUAGE",
+    "BASE_SPECIAL_TOKENS",
+    "SPECIAL_TOKENS",
+    "EXTENDED_SPECIAL_TOKENS",
+    "BYTE_FORMAT_NAME",
+    "BPE_FORMAT_NAME",
+    "BPE_EXTENDED_FORMAT_NAME",
+    "TextTokenizer",
+    "ByteTokenizer",
+    "BPETokenizer",
+    "tokenizer_from_dict",
+]

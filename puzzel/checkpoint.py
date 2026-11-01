@@ -1,4 +1,10 @@
-"""Atomic, validated save/load helpers for Puzzel-owned training checkpoints."""
+"""Atomic, validated save/load helpers for Puzzel-owned training checkpoints.
+
+Supports both ``puzzel-checkpoint-v1`` (legacy) and ``puzzel-checkpoint-v2``
+(modern architecture) formats. Old v1 checkpoints are loaded read-only and
+never modified. New checkpoints are saved in v2 format with full architecture
+metadata (RoPE, RMSNorm, SwiGLU, GQA, KV-cache flags).
+"""
 
 from __future__ import annotations
 
@@ -75,7 +81,10 @@ def _validate_temporary_checkpoint(
         payload = torch.load(path, map_location="meta", weights_only=True)
     except Exception as exc:
         raise OSError("temporary checkpoint failed safe-load validation") from exc
-    if not isinstance(payload, dict) or payload.get("format") != "puzzel-checkpoint-v1":
+    if not isinstance(payload, dict) or payload.get("format") not in {
+        "puzzel-checkpoint-v1",
+        "puzzel-checkpoint-v2",
+    }:
         raise OSError("temporary checkpoint has an invalid format")
     if payload.get("step") != step:
         raise OSError("temporary checkpoint step failed validation")
@@ -160,7 +169,7 @@ def save_checkpoint(
     temporary_path = Path(temporary_name)
     try:
         payload = {
-            "format": "puzzel-checkpoint-v1",
+            "format": "puzzel-checkpoint-v2",
             "step": step,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer_state,
@@ -207,12 +216,15 @@ def load_checkpoint(
 ) -> LoadedCheckpoint:
     """Load a Puzzel checkpoint using PyTorch's restricted weights-only loader.
 
-    The file reconstructs only Puzzel's own architecture and tokenizer; no
-    remote or pretrained model path exists. Missing resume-only fields are
-    accepted for checkpoints written by earlier Puzzel development phases.
+    Accepts both ``puzzel-checkpoint-v1`` (legacy) and ``puzzel-checkpoint-v2``
+    (modern) formats. Missing resume-only fields are accepted for checkpoints
+    written by earlier Puzzel development phases.
     """
     payload = torch.load(path, map_location=map_location, weights_only=True)
-    if not isinstance(payload, dict) or payload.get("format") != "puzzel-checkpoint-v1":
+    if not isinstance(payload, dict) or payload.get("format") not in {
+        "puzzel-checkpoint-v1",
+        "puzzel-checkpoint-v2",
+    }:
         raise ValueError("not a supported Puzzel checkpoint")
 
     try:
@@ -283,3 +295,10 @@ def load_checkpoint(
         best_validation_loss=best_validation_loss,
         early_stopping_bad_evaluations=early_stopping_bad_evaluations,
     )
+
+
+__all__ = [
+    "LoadedCheckpoint",
+    "save_checkpoint",
+    "load_checkpoint",
+]

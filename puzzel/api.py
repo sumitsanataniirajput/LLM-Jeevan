@@ -13,13 +13,17 @@ infrastructure is implied by this module.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator
 
+from puzzel.auth.middleware import APIKeyAuth, create_default_store
+from puzzel.auth.security import default_rate_limiter, rate_limit, sanitize_input
 from puzzel.inference import (
     GenerationConfig,
     InferenceEngine,
@@ -39,6 +43,12 @@ app = FastAPI(
 # Global inference engine, populated on startup.
 _engine: InferenceEngine | None = None
 _checkpoint_path: str | Path | None = None
+
+# Authentication setup.
+_auth_enabled = os.environ.get("PUZZEL_AUTH_ENABLED", "false").lower() == "true"
+_auth_store = create_default_store() if _auth_enabled else None
+_api_key_auth = APIKeyAuth(_auth_store, header_name="X-API-Key") if _auth_enabled else None
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 class GenerateRequest(BaseModel):
@@ -168,6 +178,38 @@ def _get_engine() -> InferenceEngine:
     return _engine
 
 
+async def _auth_dependency(request: Request, api_key: str | None = None) -> None:
+    """Optional API key authentication dependency.
+
+    Only enforces auth when PUZZEL_AUTH_ENABLED=true. When enabled,
+    requires a valid X-API-Key header and applies rate limiting.
+    """
+    if not _auth_enabled:
+        return
+
+    client_ip = request.client.host if request.client else "unknown"
+    if not rate_limit(client_ip, default_rate_limiter):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded",
+        )
+
+    if api_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key required",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+
+    context = _api_key_auth.authenticate({"X-API-Key": api_key})
+    if not context.authenticated:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+
+
 @app.get("/health", response_model=HealthResponse, tags=["system"])
 def health() -> HealthResponse:
     """Service health check. Reports whether the model is loaded."""
@@ -180,7 +222,11 @@ def health() -> HealthResponse:
 
 
 @app.get("/model/info", response_model=ModelInfoResponse, tags=["model"])
-def model_info() -> ModelInfoResponse:
+def model_info(
+    request: Request,
+    api_key: str | None = Depends(_api_key_header),
+    _: None = Depends(_auth_dependency),
+) -> ModelInfoResponse:
     """Return static metadata about the loaded model, including limitations."""
     engine = _get_engine()
     info = engine.model_info
@@ -199,7 +245,12 @@ def model_info() -> ModelInfoResponse:
 
 
 @app.post("/generate", response_model=GenerateResponse, tags=["generation"])
-def generate(request: GenerateRequest) -> GenerateResponse:
+def generate(
+    request: GenerateRequest,
+    http_request: Request,
+    api_key: str | None = Depends(_api_key_header),
+    _: None = Depends(_auth_dependency),
+) -> GenerateResponse:
     """Generate a text continuation for the given prompt.
 
     Supports configurable temperature, top-k, top-p, and seed for controlling
@@ -215,7 +266,8 @@ def generate(request: GenerateRequest) -> GenerateResponse:
             seed=request.seed,
             stop_at_eos=request.stop_at_eos,
         )
-        result = engine.generate(request.prompt, config=config)
+        sanitized_prompt = sanitize_input(request.prompt)
+        result = engine.generate(sanitized_prompt, config=config)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - surface unexpected errors as 500

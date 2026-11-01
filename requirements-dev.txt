@@ -1,2 +1,3 @@
--r requirements.txt
-pytest>=8.0,<10.0
+# Thin pointer: dev + serve extras are declared in pyproject.toml.
+# Install with:  pip install -e ".[dev,serve]"
+-e .[dev,serve]

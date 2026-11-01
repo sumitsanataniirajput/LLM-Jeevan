@@ -139,18 +139,19 @@ class ToolExecutor:
             source_file = inspect.getfile(fn)
             source_lines = inspect.getsourcelines(fn)[0]
             # Build code that imports and calls the function.
-            # This is a simplified approach; in production, we'd use
-            # a more robust serialization mechanism.
+            # Uses __import__ (builtin) instead of importlib.import_module
+            # because importlib is in the sandbox's FORBIDDEN_MODULES set.
             module_name = fn.__module__
             qualname = fn.__qualname__
 
+            # __import__ with dotted names returns the top-level package;
+            # fromlist ensures we get the actual submodule.
             code = (
-                f"import importlib\n"
-                f"mod = importlib.import_module({module_name!r})\n"
+                f"mod = __import__({module_name!r}, fromlist=['x'])\n"
                 f"fn = mod\n"
                 f"for part in {qualname!r}.split('.'):\n"
                 f"    fn = getattr(fn, part)\n"
-                f"result = fn({arguments!r})\n"
+                f"result = fn(**{arguments!r})\n"
                 f"print(result)\n"
             )
         except (OSError, TypeError):

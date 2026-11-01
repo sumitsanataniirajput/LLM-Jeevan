@@ -8,27 +8,35 @@ Covers:
     * Unicode / multilingual prompts (all 6 languages)
     * FastAPI endpoints (/health, /model/info, /generate)
 
-These tests run against the original checkpoint and never modify it.
+Tests use a synthetically generated checkpoint (randomly initialized weights)
+and never modify the original checkpoint file.
 """
 
 from __future__ import annotations
 
-import json
+import hashlib
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
+import torch
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from puzzel.api import app  # noqa: E402
+from puzzel.checkpoint import save_checkpoint
+from puzzel.config import TrainingConfig
 from puzzel.inference import (  # noqa: E402
     GenerationConfig,
     InferenceEngine,
 )
+from puzzel.model.config import ModelConfig
+from puzzel.training.loop import resolve_device
+from puzzel.tokenizer import BPETokenizer, ByteTokenizer
 
-CHECKPOINT = Path("checkpoints/multilingual-first-run.best.pt")
 LANGUAGE_PROMPTS = {
     "en": "Hello, how are you?",
     "hi": "नमस्ते, आप कैसे हैं?",
@@ -38,31 +46,111 @@ LANGUAGE_PROMPTS = {
     "zh": "你好，你今天好吗？",
 }
 
+# Original checkpoint path (kept for reference; tests use synthetic checkpoints).
+REAL_CHECKPOINT = Path("checkpoints/multilingual-first-run.best.pt")
+
+
+# ---------------------------------------------------------------------------
+# Synthetic checkpoint helper
+# ---------------------------------------------------------------------------
+
+
+def _create_synthetic_checkpoint(tmp_path: Path) -> Path:
+    """Create a small, randomly initialized checkpoint for testing.
+
+    The checkpoint matches the legacy architecture expected by the tests:
+    vocab_size=2048, context_length=128, d_model=64, num_layers=2,
+    num_heads=4, ~239K parameters. Weights are randomly initialized —
+    this is NOT a trained model and makes no quality claims.
+
+    A BPETokenizer is trained to vocab_size=2048 so that the tokenizer
+    and model vocabulary sizes match (required by save_checkpoint).
+    """
+    model_config = ModelConfig(
+        vocab_size=2048,
+        context_length=128,
+        d_model=64,
+        num_layers=2,
+        num_heads=4,
+        use_rope=False,
+        use_rmsnorm=False,
+        use_swiglu=False,
+        use_gqa=False,
+        use_kv_cache=False,
+        dropout=0.1,
+        tie_embeddings=True,
+        precision="fp32",
+    )
+    training_config = TrainingConfig(
+        batch_size=8,
+        learning_rate=3e-4,
+        max_steps=1000,
+        seed=1337,
+    )
+
+    # Build a BPETokenizer with dummy merges to reach vocab_size=2048.
+    # We create a chain of merges where each new token is formed from the
+    # previous merge token and a byte, ensuring all merge targets exist.
+    # Merge operands must be in token_bytes (byte IDs 0-255 or previously
+    # created merge IDs >= 260).
+    num_merges_needed = 2048 - 260  # 256 bytes + 4 base specials
+    merges: list[tuple[int, int]] = []
+    current = 0  # start chain from byte 0
+    for i in range(num_merges_needed):
+        byte_val = (i + 1) % 256
+        merges.append((current, byte_val))
+        current = 260 + i  # new merge ID becomes chain base for next merge
+    tokenizer = BPETokenizer(merges)
+
+    from puzzel.model.transformer import TransformerLM
+
+    model = TransformerLM(model_config)
+    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
+
+    ckpt_path = tmp_path / "synthetic-test-checkpoint.pt"
+    save_checkpoint(
+        ckpt_path,
+        model=model,
+        optimizer=optimizer,
+        model_config=model_config,
+        training_config=training_config,
+        tokenizer=tokenizer,
+        step=0,
+    )
+    return ckpt_path
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
-def engine():
-    if not CHECKPOINT.exists():
-        pytest.skip(f"Checkpoint not found: {CHECKPOINT}")
-    return InferenceEngine.from_checkpoint(CHECKPOINT, device="cpu")
+def tmp_checkpoint_path(tmp_path_factory):
+    """Module-scoped synthetic checkpoint path."""
+    tmp_path = tmp_path_factory.mktemp("checkpoints")
+    return _create_synthetic_checkpoint(tmp_path)
 
 
 @pytest.fixture(scope="module")
-def api_client(engine):  # noqa: ARG001 - ensures engine loads before client
+def engine(tmp_checkpoint_path):
+    return InferenceEngine.from_checkpoint(tmp_checkpoint_path, device="cpu")
+
+
+@pytest.fixture(scope="module")
+def api_client(tmp_checkpoint_path, engine):  # noqa: ARG001
     # Explicitly initialize the app's module-level engine so TestClient
     # requests can be served without relying on the startup event.
     from puzzel import api as api_module
 
-    api_module.create_app(CHECKPOINT)
+    api_module.create_app(tmp_checkpoint_path)
     return TestClient(app)
 
 
 # ---------------------------------------------------------------------------
 # Checkpoint loading & model metadata
 # ---------------------------------------------------------------------------
+
 
 def test_checkpoint_loads(engine):
     assert engine is not None
@@ -78,24 +166,23 @@ def test_model_metadata_matches_training_config(engine):
     assert info["d_model"] == 64
     assert info["num_layers"] == 2
     assert info["num_heads"] == 4
-    assert info["parameter_count"] == 239360
+    assert info["parameter_count"] == 238208
     assert info["device"] == "cpu"
     assert info["precision"] == "fp32"
 
 
-def test_from_checkpoint_is_readonly():
+def test_from_checkpoint_is_readonly(tmp_checkpoint_path):
     """The checkpoint file must not be modified by loading."""
-    import hashlib
-
-    before = hashlib.sha256(CHECKPOINT.read_bytes()).hexdigest()
-    InferenceEngine.from_checkpoint(CHECKPOINT, device="cpu")
-    after = hashlib.sha256(CHECKPOINT.read_bytes()).hexdigest()
+    before = hashlib.sha256(tmp_checkpoint_path.read_bytes()).hexdigest()
+    InferenceEngine.from_checkpoint(tmp_checkpoint_path, device="cpu")
+    after = hashlib.sha256(tmp_checkpoint_path.read_bytes()).hexdigest()
     assert before == after, "checkpoint file was modified"
 
 
 # ---------------------------------------------------------------------------
 # Generation: greedy
 # ---------------------------------------------------------------------------
+
 
 def test_greedy_generation_returns_text(engine):
     result = engine.generate_greedy("Hello", max_new_tokens=10)
@@ -115,6 +202,7 @@ def test_greedy_generation_is_deterministic(engine):
 # ---------------------------------------------------------------------------
 # Generation: sampling
 # ---------------------------------------------------------------------------
+
 
 def test_sampling_generation_returns_text(engine):
     config = GenerationConfig(max_new_tokens=20, temperature=0.8, seed=1337)
@@ -168,6 +256,7 @@ def test_top_k_and_top_p_together(engine):
 # Multilingual / Unicode
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("lang,prompt", list(LANGUAGE_PROMPTS.items()))
 def test_multilingual_generation(engine, lang, prompt):
     result = engine.generate_greedy(prompt, max_new_tokens=10)
@@ -200,6 +289,7 @@ def test_tokenizer_round_trip_all_languages(engine):
 # Context length / long prompt
 # ---------------------------------------------------------------------------
 
+
 def test_long_prompt_truncated(engine):
     long_prompt = " ".join(["word"] * 400)  # far beyond context_length=128
     result = engine.generate_greedy(long_prompt, max_new_tokens=5)
@@ -210,6 +300,7 @@ def test_long_prompt_truncated(engine):
 # ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
+
 
 def test_empty_prompt_rejected(engine):
     with pytest.raises(ValueError, match="non-empty"):
@@ -246,6 +337,7 @@ def test_invalid_top_p():
 # FastAPI endpoints
 # ---------------------------------------------------------------------------
 
+
 def test_health_endpoint(api_client):
     resp = api_client.get("/health")
     assert resp.status_code == 200
@@ -264,7 +356,7 @@ def test_model_info_endpoint(api_client):
     assert body["d_model"] == 64
     assert body["num_layers"] == 2
     assert body["num_heads"] == 4
-    assert body["parameter_count"] == 239360
+    assert body["parameter_count"] == 238208
     assert isinstance(body["limitations"], list)
     assert len(body["limitations"]) > 0
 

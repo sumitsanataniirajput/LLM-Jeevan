@@ -40,7 +40,11 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _compute_idf(documents: list[list[str]]) -> dict[str, float]:
-    """Compute inverse document frequency for a corpus of token lists."""
+    """Compute inverse document frequency for a corpus of token lists.
+
+    Uses the standard BM25 IDF formula: log((N - n + 0.5) / (n + 0.5)) + 1.
+    This is always non-negative and works correctly even with small corpora.
+    """
     num_docs = len(documents)
     doc_freq: dict[str, int] = {}
     for doc in documents:
@@ -48,7 +52,8 @@ def _compute_idf(documents: list[list[str]]) -> dict[str, float]:
         for token in seen:
             doc_freq[token] = doc_freq.get(token, 0) + 1
     return {
-        token: math.log(num_docs / (1 + freq)) for token, freq in doc_freq.items()
+        token: math.log((num_docs - freq + 0.5) / (freq + 0.5)) + 1.0
+        for token, freq in doc_freq.items()
     }
 
 

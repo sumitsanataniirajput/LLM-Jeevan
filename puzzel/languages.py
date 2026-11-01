@@ -6,8 +6,33 @@ language detection based on Unicode script analysis.
 
 from __future__ import annotations
 
-import unicodedata
 from typing import Optional
+
+# Unicode code point ranges for script detection (Python 3.11 compatible,
+# since unicodedata.script() was added in Python 3.13).
+_SCRIPT_RANGES: list[tuple[str, int, int]] = [
+    ("Latin", 0x0000, 0x007F),      # Basic Latin
+    ("Latin", 0x0080, 0x00FF),      # Latin-1 Supplement
+    ("Latin", 0x0100, 0x017F),      # Latin Extended-A
+    ("Latin", 0x0180, 0x024F),      # Latin Extended-B
+    ("Devanagari", 0x0900, 0x097F), # Devanagari (Hindi)
+    ("Arabic", 0x0600, 0x06FF),     # Arabic
+    ("Arabic", 0x0750, 0x077F),     # Arabic Supplement
+    ("Han", 0x4E00, 0x9FFF),        # CJK Unified Ideographs
+    ("Han", 0x3400, 0x4DBF),        # CJK Unified Ideographs Extension A
+]
+
+
+def _get_script(char: str) -> str:
+    """Return the Unicode script name for a character using code point ranges.
+
+    Falls back to "Unknown" for characters not in any known range.
+    """
+    code_point = ord(char)
+    for script, start, end in _SCRIPT_RANGES:
+        if start <= code_point <= end:
+            return script
+    return "Unknown"
 
 LANGUAGE_NAMES: dict[str, str] = {
     "en": "English",
@@ -77,10 +102,7 @@ def detect_language(text: str) -> Optional[str]:
     # Count scripts in the sample
     script_counts: dict[str, int] = {}
     for char in sample_chars:
-        try:
-            script = unicodedata.script(char)
-        except ValueError:
-            script = "Unknown"
+        script = _get_script(char)
         script_counts[script] = script_counts.get(script, 0) + 1
 
     # Find the dominant script
@@ -96,8 +118,6 @@ def detect_language(text: str) -> Optional[str]:
     detected = _SCRIPT_LANGUAGE_MAP.get(dominant_script)
     if detected is None:
         # Latin script - could be en, es, or fr; can't distinguish by script
-        if dominant_script == "Latin":
-            return None
         return None
 
     # Verify the detected language is supported
@@ -136,10 +156,7 @@ def detect_language_confident(text: str, *, threshold: float = 0.80) -> Optional
 
     script_counts: dict[str, int] = {}
     for char in sample_chars:
-        try:
-            script = unicodedata.script(char)
-        except ValueError:
-            script = "Unknown"
+        script = _get_script(char)
         script_counts[script] = script_counts.get(script, 0) + 1
 
     dominant_script = max(script_counts, key=script_counts.get)

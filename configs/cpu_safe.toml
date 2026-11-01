@@ -1,0 +1,36 @@
+# CPU-safe small profile for Puzzel
+# Conservative settings for limited hardware (2 CPU cores, ~1 GB RAM available)
+
+[model]
+vocab_size = 2048
+context_length = 256
+d_model = 256
+num_layers = 4
+num_heads = 4
+num_kv_heads = 2
+mlp_ratio = 4
+use_rope = true
+use_rmsnorm = true
+use_swiglu = true
+use_gqa = true
+use_kv_cache = true
+dropout = 0.0
+
+[training]
+batch_size = 1
+learning_rate = 1e-3
+warmup_steps = 100
+max_steps = 5000
+gradient_clip = 1.0
+weight_decay = 0.01
+lr_scheduler = "cosine"
+seed = 42
+
+[data]
+target_vocab_size = 2048
+min_frequency = 2
+max_document_characters = 5000
+train_fraction = 0.8
+val_fraction = 0.1
+test_fraction = 0.1
+split_seed = 731

@@ -375,3 +375,50 @@ class InferenceEngine:
         return self.generate(
             prompt, GenerationConfig(max_new_tokens=max_new_tokens, temperature=0.0)
         )
+
+
+# Re-export streaming, batching, quantization, and optimizer modules.
+from puzzel.inference.batching import (  # noqa: E402
+    BatchGenerationResult,
+    BatchResult,
+    batch_generate,
+)
+from puzzel.inference.optimizer import (  # noqa: E402
+    InferenceProfile,
+    get_default_profiles,
+    get_memory_profile,
+    memory_efficient_attention,
+    select_device,
+    set_cpu_threads,
+)
+from puzzel.inference.quantization import (  # noqa: E402
+    QuantizationConfig,
+    dequantize_model,
+    estimate_memory_savings,
+    quantize_model,
+)
+from puzzel.inference.streaming import (  # noqa: E402
+    stream_generate,
+    stream_generate_cumulative,
+)
+
+__all__ = [
+    "GenerationConfig",
+    "GenerationResult",
+    "InferenceEngine",
+    "BatchGenerationResult",
+    "BatchResult",
+    "batch_generate",
+    "InferenceProfile",
+    "get_default_profiles",
+    "get_memory_profile",
+    "memory_efficient_attention",
+    "select_device",
+    "set_cpu_threads",
+    "QuantizationConfig",
+    "dequantize_model",
+    "estimate_memory_savings",
+    "quantize_model",
+    "stream_generate",
+    "stream_generate_cumulative",
+]

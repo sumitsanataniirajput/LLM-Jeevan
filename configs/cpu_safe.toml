@@ -1,5 +1,6 @@
 # CPU-safe small profile for Puzzel
 # Conservative settings for limited hardware (2 CPU cores, ~1 GB RAM available)
+# This configuration is validated against puzzel.config and is loadable.
 
 [model]
 vocab_size = 2048
@@ -19,18 +20,42 @@ dropout = 0.0
 [training]
 batch_size = 1
 learning_rate = 1e-3
-warmup_steps = 100
-max_steps = 5000
-gradient_clip = 1.0
 weight_decay = 0.01
-lr_scheduler = "cosine"
+max_steps = 5000
+gradient_clip_norm = 1.0
 seed = 42
+num_workers = 0
+device = "cpu"
+precision = "fp32"
+log_every_steps = 10
+save_every_steps = 100
+scheduler = "cosine"
+warmup_steps = 100
+min_learning_rate = 1e-5
+validation_every_steps = 100
+validation_batches = 32
+early_stopping_patience = 0
+early_stopping_min_delta = 0.0
+unstable_loss_threshold = 100.0
+loss_spike_multiplier = 10.0
 
-[data]
-target_vocab_size = 2048
+[training.language_sampling_weights]
+en = 0.20
+hi = 0.20
+es = 0.15
+fr = 0.15
+ar = 0.15
+zh = 0.15
+
+[tokenizer]
+kind = "bpe"
+vocab_size = 2048
 min_frequency = 2
-max_document_characters = 5000
-train_fraction = 0.8
-val_fraction = 0.1
+
+[dataset]
+validation_fraction = 0.1
 test_fraction = 0.1
 split_seed = 731
+max_document_characters = 1000000
+jsonl_text_field = "text"
+require_document_metadata = true

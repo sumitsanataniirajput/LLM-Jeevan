@@ -1,0 +1,60 @@
+# Temporary prep config for smoke test dataset (higher char limit)
+[tokenizer]
+kind = "bpe"
+vocab_size = 512
+min_frequency = 2
+
+[model]
+vocab_size = 512
+context_length = 64
+d_model = 32
+num_layers = 1
+num_heads = 2
+mlp_ratio = 2
+dropout = 0.0
+pad_token_id = 258
+tie_embeddings = true
+use_rope = true
+use_rmsnorm = true
+use_swiglu = true
+use_gqa = true
+num_kv_heads = 1
+use_kv_cache = true
+
+[training]
+batch_size = 1
+learning_rate = 1e-3
+weight_decay = 0.01
+max_steps = 100
+gradient_clip_norm = 1.0
+seed = 42
+num_workers = 0
+device = "cpu"
+precision = "fp32"
+log_every_steps = 10
+save_every_steps = 50
+scheduler = "cosine"
+warmup_steps = 10
+min_learning_rate = 1e-5
+validation_every_steps = 25
+validation_batches = 4
+early_stopping_patience = 0
+early_stopping_min_delta = 0.0
+unstable_loss_threshold = 100.0
+loss_spike_multiplier = 10.0
+
+[training.language_sampling_weights]
+en = 0.20
+hi = 0.20
+es = 0.15
+fr = 0.15
+ar = 0.15
+zh = 0.15
+
+[dataset]
+validation_fraction = 0.1
+test_fraction = 0.1
+split_seed = 42
+max_document_characters = 200000
+jsonl_text_field = "text"
+require_document_metadata = true

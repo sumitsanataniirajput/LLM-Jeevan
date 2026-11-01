@@ -174,7 +174,9 @@ class Sandbox:
 
             # Run in a subprocess with restricted environment.
             env = os.environ.copy()
-            env["PYTHONPATH"] = ""
+            # Include the workspace root so sandboxed tool code can import
+            # the puzzel package and its submodules.
+            env["PYTHONPATH"] = os.getcwd()
             env["NO_PROXY"] = "*"
             env["HTTP_PROXY"] = ""
             env["HTTPS_PROXY"] = ""

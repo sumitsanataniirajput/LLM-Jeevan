@@ -167,11 +167,12 @@ class ModelConfig:
         if self.use_swiglu:
             hidden = (8 * width) // 3
             # QKV projections (q, k, v) + output projection
+            effective_head_dim = self.effective_head_dim
             attention_params = (
-                width * self.num_heads * self.head_dim  # q
-                + width * self.effective_num_kv_heads * self.head_dim  # k
-                + width * self.effective_num_kv_heads * self.head_dim  # v
-                + width * self.num_heads * self.head_dim  # output
+                width * self.num_heads * effective_head_dim  # q
+                + width * self.effective_num_kv_heads * effective_head_dim  # k
+                + width * self.effective_num_kv_heads * effective_head_dim  # v
+                + width * self.num_heads * effective_head_dim  # output
             )
             if self.bias:
                 attention_params += (
